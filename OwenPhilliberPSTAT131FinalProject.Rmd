@@ -1,0 +1,291 @@
+---
+title: "PSTAT 131 Final Project"
+author: "Owen Philliber"
+date: "2023-12-13"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(12345)
+```
+
+```{r packages, include=F}
+library(tidyverse)
+library(dplyr)
+library(tree)
+library(maptree)
+library(randomForest)
+library(gbm)
+library(corrplot)
+```
+
+```{r data_set}
+data <- read_csv('Healthcare-Diabetes.csv')
+
+# removing the Unique Identifier as it is not important
+data <- data[,-1]
+
+# Converting the outcome to a factor
+data$Outcome <- factor(data$Outcome)
+
+summary(data)
+```
+
+# Introduction
+
+This data set was found on Kaggle, produced by Nandita Pore. The data set can be found here: https://www.kaggle.com/datasets/nanditapore/healthcare-diabetes/data. In our data frame, we have 8 explanatory variables and one response variable. All the explanatory variables are continuous variables and the response variable is a factor. Thus our models will be classification models attempting to model if a patient is diabetic or not. In this project, we will use various decision tree techniques in order to explain the presence of diabetes in a patient. The decision tree methods we will use is classification tree, pruned classification tree, bagged decision tree, random forest tree, and a boosted tree. We will then analyze the performance of the different methods using the test error rate estimate.
+
+# Exploritory Analysis of the Data Set
+
+Explanatory Variables:
+
+1) Pregnancies: how many times the patient has been pregnant
+
+2) Glucose: The concentration of plasma glucose over a 2 hour glucose tolarance test
+
+3) BloodPressure: Diallastic Blood Pressure of the patient (mm Hg)
+
+4) SkinThickness: The thickness of the skin of the tricep skinfolds (mm)
+
+5) Insulin: 2-Hour serum insulin (mu U/ml)
+
+6) BMI: Body mass index of the patient (weight in kg / height in m^2)
+
+7) DiabetesPedigreeFunction: A genetic score of diabetes
+
+8) Age: Age of the patient
+
+Response Variable:
+
+Outcome: indicator if diabetes is present in the patient or not, 1 indicates there is presence and 0 indicates there is not
+
+In order to run regressions on this data, it is important to understand the trends of the data. A histogram of each variable is important to understanding the distribution of each variable. Histograms are also a great way to see any potential high leverage points.
+
+```{r hist, figures-side, fig.show='hold', out.width = '50%', echo = F}
+hist(data$Glucose, main = 'Histogram of Glucose Levels of Patients',
+     xlab = 'Glucose Levels of a Patient', col = 'LIGHT BLUE')
+hist(data$BloodPressure, main = 'Histogram of Blood Pressure',
+     xlab = 'Blood Pressure of a Patient', col = 'LIGHT BLUE')
+hist(data$Pregnancies, main = 'Histogram of Skin Thickness',
+     xlab = 'Skin Thickness of Tricep', col = 'LIGHT BLUE')
+hist(data$BMI, main = 'Histogram of BMI',
+     xlab = 'BMI', col = 'LIGHT BLUE')
+hist(data$Age, main = 'Histogram of Age',
+     xlab = 'Age', col = 'LIGHT BLUE')
+hist(data$Insulin, main = 'Histogram of Insulin',
+     xlab = 'Insulin', col = 'LIGHT BLUE')
+hist(data$Pregnancies, main = 'Histogram of Pregnancies',
+     xlab = 'Pregnancies', col = 'LIGHT BLUE')
+hist(data$DiabetesPedigreeFunction, main = 'Histogram of Diabetes Pedigree Function',
+     xlab = 'Diabetes Pedigree Score', col = 'LIGHT BLUE')
+```
+The graphs for glucose levels, blood pressure, skin thickness, and BMI all have observations that are zero. This is a concern since if any of these variables were zero on a patient, they would be dead. Based on the graph of the skin thickness, there are over 800 patients that have a skin thickness of zero. Since that is not possible we will assume that the measurement is not an outlier and occurs from the nature of the data collection system.
+
+As for the other variables, we will produce histograms of the outlier data to the rest of the data. This is to see if there are any trends in the observations with zero glucose levels, blood pressure, or BMI.
+
+```{r outliers, echo = F}
+outliers = which(data$BloodPressure == 0 | data$Glucose == 0 | data$BMI == 0)
+data.outliers = data[outliers,]
+noutliers = Outliers = which(data$BloodPressure != 0 & data$Glucose != 0 & data$BMI != 0)
+data.noutliers = data[noutliers,]
+```
+```{r outliersGlucose, figures-side, fig.show='hold', out.width = '50%', echo = F}
+hist(data.outliers$Glucose, main = 'Histogram of Glucose Levels of Outliers',
+     xlab = 'Glucose Levels of Patients', col = 'LIGHT BLUE')
+hist(data.noutliers$Glucose, main = 'Histogram of Glucose Levels of Non-Outliers',
+     xlab = 'Glucose Levels of Patients', col = 'LIGHT GREEN')
+```
+```{r outliersBloodPressure, figures-side, fig.show='hold', out.width = '50%', echo = F}
+hist(data.outliers$BloodPressure, main = 'Histogram of Blood Pressure of Outliers',
+     xlab = 'Blood Pressure of Patients', col = 'LIGHT BLUE')
+hist(data.noutliers$BloodPressure, main = 'Histogram of Blood Pressure of Non-Outliers',
+     xlab = 'Blood Pressure of Patients', col = 'LIGHT GREEN')
+```
+```{r outliersBMI, figures-side, fig.show='hold', out.width = '50%', echo = F}
+hist(data.outliers$BMI, main = 'Histogram of BMI of Outliers',
+     xlab = 'BMI of Patients', col = 'LIGHT BLUE')
+hist(data.noutliers$BMI, main = 'Histogram of BMI of Non-Outliers',
+     xlab = 'BMI of Patients', col = 'LIGHT GREEN')
+```
+
+These graphs show that besides the variables that are zero, the observations with outliers are distributed similar to the rest of the observations. Since there are `r length(outliers)` observations, which is only `r length(outliers)/nrow(data)`% of the data set, the outliers do not impact the data set significantly. Thus, we will leave them in the dataset.
+
+Another important measure to analyze the data is the correlation. The graph below is a correlation graph, so each box measures the correlation between the row variable and the column variable. The larger and darker the circle is the mor correlated the two variables are.
+
+```{r corrPlot, echo = F}
+data %>% select(where(is.numeric)) %>% cor() %>% corrplot()
+```
+
+As shown by the graph, the variables pairs that have the most correlation are pregnancy and age, skin thickness and insulin, and skin thickness and BMI. All the other variable pairs are mostly uncorrelated.
+
+# Models
+
+Since the data set has 2768 observations, we will split the data set into a training set and a test set. The test set will be for comparing the performances of the different models. We us roughly 80% of the data for the training data and the other 20% will be for a test set. In order to use as much of the data for training, we will use cross validation for tuning parameters. This allows us to only have a training and test set instead of a training, validation, and test set.
+
+```{r trainTestSet}
+train <- sample(nrow(data), nrow(data)*.8)
+
+data.train <- data[train, ]
+data.test <- data[-train, ]
+```
+
+## Basic Binary Tree
+A basic binary tree is a non-parametric method that splits the predictor space into regions. For classification, the mode of the region is used for the prediction for any variable that falls into that region. R uses a top down greedy approach which starts with all observations belonging to a single region. Then the function calculates the best way to split the region using the specified criterion. The default splitting criterion for the tree function in R is the deviance criterion.
+
+```{r basicTree, fig.width = 10.5, fig.height = 6, echo = F}
+tree.df = tree(Outcome ~ ., data = data.train)
+summary(tree.df)
+
+draw.tree(tree.df, nodeinfo = T, cex = .7)
+title("Diabetes Classification Tree")
+```
+
+The basic tree has many flaws. For example, the lowest split of pregnancies is redundant since both sides of the split lead to a prediction of 1.
+
+## Pruning the Tree
+
+Often times an ordinary binary classification tree will over fit the data, thus we must prune the data. Pruning is achieved through minimizing the splitting criterion after adding a cost of complexity to the splitting criterion. The way we do this is by limiting the size and preforming a cross validation changing the size of the trees used.
+
+```{r prune, include = F}
+# Cross Validates using Misclassification Error and 10 folds
+cv = cv.tree(tree.df, FUN = prune.misclass, K = 10)
+
+# The Size of the Tree used in Cross Validation
+cv$size
+
+# The Corresponding Misclassification Error
+cv$dev
+
+best.cv <- min(cv$size[cv$dev == min(cv$dev)])
+best.cv
+```
+
+```{r prunedTree, fig.width = 10.5, fig.height = 6, echo = F}
+pruned.tree <- prune.misclass(tree.df, best = best.cv)
+
+summary(pruned.tree)
+
+draw.tree(pruned.tree, nodeinfo = T, cex = .7)
+title("Pruned Diabetes Classification Tree ")
+```
+
+As we can see above, the pruned tree is much more simple. This is better for readability and interpretability since every split has a purpose. Also the pruned tree should theoretically have a lower test error rate since the pruned tree should be more generalized.
+
+## Bagging
+
+Bagging is a tree building technique that is built open using bootstrapping to create more training sets. From the bootstrap sets, a model is built upon each of the bootstrap set and then the mode of all the model outcomes is the result. The aim of bagging is to reduce the overall variance of the model. This is because the variance of an average reduces as the number of variables being averaged increases. This is shown in the equation $Var(\frac{1}{B}\sum V_i) = \frac{\sigma^2}{B}$ where B is the number of independent random variables. 
+```{r bagging, echo = F}
+bag.tree <- randomForest(Outcome ~ ., data = data.train, mtry = 8)
+bag.tree
+```
+
+```{r baggingImportance}
+importance(bag.tree)
+```
+The importance of each variable is found through the average of how much the gini index is decreased from the splits from that predictor. As we can see, Glucose, BMI, and Age are the three most important variables from the bagged tree.
+
+## Random Forest
+Random Forest is similar to bagging, but when creating each tree random forests selects $m < p$ predictors at random. This helps decorrelate the trees. For classification typically $m = \sqrt p$, so in this case $m = \sqrt 8 \approx 3$
+
+```{r randomForest, echo = F}
+rf.tree <- randomForest(Outcome ~ ., data = data.train, mtry = 3)
+rf.tree
+```
+
+As we can see the results are comparable to bagging.
+
+```{r rfImportance}
+importance(rf.tree)
+```
+To be expected, the order of importance for each variable from the random forest tree is the same as the bagged tree.
+
+## Boosting
+
+Boosting is another decision tree method. One major difference between random forests and bagging compared to boosting is that boosting does not rely on bootstrap sampling. Instead, boosting combines trees sequentially.
+
+```{r boosting, echo = F}
+# Variable Outcome Being a Factor was Producing Errors, so Converted it to Characters Just for Boosting
+boosting.data <- data.train
+boosting.data$Outcome <- as.character(boosting.data$Outcome)
+
+# Fitting the Boosted Tree
+boost.tree <- gbm(Outcome ~ ., data = boosting.data,
+                  distribution = 'bernoulli', n.trees = 500)
+boost.tree
+summary(boost.tree)
+```
+
+
+
+As we can see, the training error rate for the boosting tree is higher than the bagging and random forest trees.
+
+
+# Evaluation and Comparison
+
+In order to properly compare the models, a separate test set must be used. This is because if a model is too flexible and overfits the data, then the training MSE will be small while the test MSE could potentially be large.
+
+
+The test MSE is approximated by the error rate of the model on the test data set. Below is the confusion matrix on the test set along with the test MSE estimate for the basic tree.
+```{r testBasicTree, echo = F}
+test.yhat.basic <- predict(tree.df, newdata = data.test)
+test.yhat.basic <- ifelse(test.yhat.basic[,2] >= .5, 1, 0)
+
+basic.table = table(test.yhat.basic, data.test$Outcome)
+basic.table
+print('Test Error Rate:')
+1 - sum(diag(basic.table))/sum(basic.table)
+```
+
+Below is the confusion matrix on the test set along with the test MSE estimate for the pruned tree.
+```{r testPrunedTree, echo = F}
+test.yhat.prune <- predict(pruned.tree, newdata = data.test)
+test.yhat.prune <- ifelse(test.yhat.prune[,2] >= .5, 1, 0)
+
+prune.table = table(test.yhat.prune, data.test$Outcome)
+prune.table
+print('Test Error Rate:')
+1 - sum(diag(prune.table))/sum(prune.table)
+```
+
+Below is the confusion matrix on the test set along with the test MSE estimate for the bagged tree.
+```{r testBagging, echo = F}
+test.yhat.bag <- predict(bag.tree, newdata = data.test)
+
+bag.table = table(test.yhat.bag, data.test$Outcome)
+bag.table
+print('Test Error Rate:')
+1 - sum(diag(bag.table))/sum(bag.table)
+```
+
+Below is the confusion matrix on the test set along with the test MSE estimate for the random forest tree
+```{r testRandomForest, echo = F}
+test.yhat.rf <- predict(rf.tree, newdata = data.test)
+
+rf.table = table(test.yhat.rf, data.test$Outcome)
+rf.table
+print('Test Error Rate:')
+1 - sum(diag(rf.table))/sum(rf.table)
+```
+
+Below is the confusion matrix on the test set along with the test MSE estimate for the boosted tree.
+```{r boostMisclassificationError, echo = F}
+boost.test <- data.test
+boost.test$Outcome <- as.character(boost.test$Outcome)
+
+boost.yhat <- predict(boost.tree, newdata = boost.test, n.trees = 500,
+                type = 'response')
+
+boost.yhat <- ifelse(boost.yhat >= .5, '1', '0')
+
+boost.table = table(boost.yhat, data.test$Outcome)
+boost.table
+print('Test Error Rate:')
+1 - sum(diag(boost.table))/sum(boost.table)
+```
+
+One observation from the test MSE estimates is that while the basic tree had a lower training error rate than the pruned tree, the pruned tree has a lower test MSE estimate. This is due to the fact that basic trees often over fits the training data. This is an example of why the training MSE is not an indicator for the test MSE. Another observation is that the the random forests and the bagging trees have the exact same low test MSE estimates. My hypothesis for this is because the correlation between the observation variables is low, so the decorrelation of the random forest does not have a large difference.
+
+# Results
+
+Through out this project my goal was to accurately model the presence of diabetes according to the data set. Each of the decision tree models had their own strengths and weaknesses. For example, the pruned tree is more understandable and interpretable that the random forest, bagged, and boosted decision trees. And the random forest and bagged decision trees have a low test MSE estimate, so they are more accurate. One room for improvement would be to tune the more of the parameters using cross validation in order to optimize each model further. The number of trees could have been more optimized for the random forest, bagged, and boosted tree as well as the shrinkage factor for the boosted tree. Another improvement would be to fit other models such as support vector machines. Each method we learned in the class can bring insight into analyzing data sets, so the more models the more the data set can be analyzed. The importance measures that the decision trees provide tell us that it is important to further study the interaction between glucose and diabetes, along with BMI and Age and diabetes. Overall, the bagged and random forest models can correctly predict diabetes given the observation variables with a high level of accuracy, which indicates a success on analyzing the data set.
